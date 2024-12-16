@@ -2,6 +2,12 @@
 
 A CLI tool to import SQL files created by [go-dump](https://github.com/ChaosHour/go-dump).
 
+## Acknowledgments
+
+> **Special Thanks:**  
+> To [Martin Arrieta](https://github.com/martinarrieta) for creating the original [go-dump](https://github.com/martinarrieta/go-dump) tool,  
+> which inspired this project and made this work possible! 🙏
+
 ## Installation
 
 ```bash
