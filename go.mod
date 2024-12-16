@@ -1,4 +1,4 @@
-module github.com/yourusername/go-load
+module github.com/ChaosHour/go-load
 
 go 1.19
 
