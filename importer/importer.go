@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/schollz/progressbar/v3"
@@ -35,6 +34,13 @@ func NewImporter(dsn string, workers, chunkSize, channelBufferSize int) (*Import
 	}, nil
 }
 
+func (i *Importer) Close() error {
+	if i.db != nil {
+		return i.db.Close()
+	}
+	return nil
+}
+
 type queryJob struct {
 	query string
 	err   error
@@ -54,8 +60,18 @@ func (i *Importer) Import(filename string) error {
 	queries := strings.Split(string(content), ";")
 	queries = filterEmptyQueries(queries)
 
-	fmt.Printf("Found %d queries to process\n", len(queries))
-	bar := progressbar.Default(int64(len(queries)))
+	bar := progressbar.NewOptions64(
+		int64(len(queries)),
+		progressbar.OptionSetWidth(30),
+		progressbar.OptionSetDescription(filepath.Base(filename)),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "=",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 
 	jobs := make(chan string, i.channelBufferSize)
 	results := make(chan queryJob, i.channelBufferSize)
@@ -63,7 +79,7 @@ func (i *Importer) Import(filename string) error {
 
 	// Start status reporter
 	stopStatus := make(chan bool)
-	go i.reportStatus(jobs, len(queries), stopStatus)
+	go i.reportStatus(stopStatus)
 
 	// Start workers
 	for w := 0; w < i.workers; w++ {
@@ -86,15 +102,14 @@ func (i *Importer) Import(filename string) error {
 	}()
 
 	// Process results
-	processed := 0
 	for result := range results {
 		if result.err != nil {
 			return result.err
 		}
-		processed++
 		bar.Add(1)
 	}
 
+	fmt.Println() // Add newline after progress bar
 	stopStatus <- true
 	return nil
 }
@@ -120,7 +135,6 @@ func (i *Importer) ImportDirectory(directory, pattern string) error {
 		if !file.IsSchema {
 			continue
 		}
-		fmt.Printf("Importing schema file: %s\n", filepath.Base(file.Path))
 		if err := i.Import(file.Path); err != nil {
 			return err
 		}
@@ -215,21 +229,7 @@ func filterEmptyQueries(queries []string) []string {
 	return filtered
 }
 
-func (i *Importer) Close() error {
-	return i.db.Close()
-}
-
-func (i *Importer) reportStatus(jobs chan string, total int, stop chan bool) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			remaining := len(jobs)
-			fmt.Printf("INFO Queue: %d of %d\n", remaining, total)
-		case <-stop:
-			return
-		}
-	}
+// Simplify reportStatus to just handle cancellation
+func (i *Importer) reportStatus(stop chan bool) {
+	<-stop
 }
