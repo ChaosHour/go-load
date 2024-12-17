@@ -118,7 +118,7 @@ mysql --defaults-group-suffix=_primary1 -Bse "SELECT table_name, table_rows FROM
 
 Load the customer data into the table:
 
-./go-load ./cmd/load/ --ini-file './my-conf.ini' --directory ../go-dump/backup4 --database sakila --workers 8
+./go-load --ini-file './my-conf.ini' --directory ../go-dump/backup4 --database sakila --workers 8
 Starting import with 8 workers
 Found 2 files to process
 sakila.customer-definition.sql 100% [==============================]         
