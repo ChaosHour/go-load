@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -18,9 +19,10 @@ type Importer struct {
 	workers           int
 	chunkSize         int
 	channelBufferSize int
+	skipSchema        bool
 }
 
-func NewImporter(dsn string, workers, chunkSize, channelBufferSize int) (*Importer, error) {
+func NewImporter(dsn string, workers, chunkSize, channelBufferSize int, skipSchema bool) (*Importer, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to database: %v", err)
@@ -31,6 +33,7 @@ func NewImporter(dsn string, workers, chunkSize, channelBufferSize int) (*Import
 		workers:           workers,
 		chunkSize:         chunkSize,
 		channelBufferSize: channelBufferSize,
+		skipSchema:        skipSchema,
 	}, nil
 }
 
@@ -39,11 +42,6 @@ func (i *Importer) Close() error {
 		return i.db.Close()
 	}
 	return nil
-}
-
-type queryJob struct {
-	query string
-	err   error
 }
 
 type SQLFile struct {
@@ -57,11 +55,17 @@ func (i *Importer) Import(filename string) error {
 		return fmt.Errorf("error reading file: %v", err)
 	}
 
-	queries := strings.Split(string(content), ";")
-	queries = filterEmptyQueries(queries)
+	// Remove USE statements and chunk comments that may cause issues
+	contentStr := string(content)
+	useRe := regexp.MustCompile(`USE ` + "`" + `[^` + "`" + `]*` + "`" + `\n`)
+	contentStr = useRe.ReplaceAllString(contentStr, "")
+	chunkRe := regexp.MustCompile(`-- Chunk \d+ - from \d+ to \d+\n`)
+	contentStr = chunkRe.ReplaceAllString(contentStr, "")
+	// Normalize line endings to Unix style
+	contentStr = strings.ReplaceAll(contentStr, "\r\n", "\n")
 
 	bar := progressbar.NewOptions64(
-		int64(len(queries)),
+		int64(1),
 		progressbar.OptionSetWidth(30),
 		progressbar.OptionSetDescription(filepath.Base(filename)),
 		progressbar.OptionSetTheme(progressbar.Theme{
@@ -73,44 +77,13 @@ func (i *Importer) Import(filename string) error {
 		}),
 	)
 
-	jobs := make(chan string, i.channelBufferSize)
-	results := make(chan queryJob, i.channelBufferSize)
-	var wg sync.WaitGroup
-
-	// Start status reporter
-	stopStatus := make(chan bool)
-	go i.reportStatus(stopStatus)
-
-	// Start workers
-	for w := 0; w < i.workers; w++ {
-		wg.Add(1)
-		go i.worker(jobs, results, &wg)
+	_, err = i.db.Exec(contentStr)
+	if err != nil {
+		return err
 	}
-
-	// Send jobs to workers
-	go func() {
-		for _, query := range queries {
-			jobs <- query
-		}
-		close(jobs)
-	}()
-
-	// Wait for results
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Process results
-	for result := range results {
-		if result.err != nil {
-			return result.err
-		}
-		bar.Add(1)
-	}
+	bar.Add(1)
 
 	fmt.Println() // Add newline after progress bar
-	stopStatus <- true
 	return nil
 }
 
@@ -130,13 +103,15 @@ func (i *Importer) ImportDirectory(directory, pattern string) error {
 
 	fmt.Printf("Found %d files to process\n", len(files))
 
-	// Process schema files first
-	for _, file := range files {
-		if !file.IsSchema {
-			continue
-		}
-		if err := i.Import(file.Path); err != nil {
-			return err
+	// Process schema files first (if not skipping)
+	if !i.skipSchema {
+		for _, file := range files {
+			if !file.IsSchema {
+				continue
+			}
+			if err := i.Import(file.Path); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -208,28 +183,4 @@ func (i *Importer) findSQLFiles(directory, pattern string) ([]SQLFile, error) {
 	}
 
 	return files, nil
-}
-
-func (i *Importer) worker(jobs <-chan string, results chan<- queryJob, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for query := range jobs {
-		_, err := i.db.Exec(query)
-		results <- queryJob{query: query, err: err}
-	}
-}
-
-func filterEmptyQueries(queries []string) []string {
-	filtered := make([]string, 0, len(queries))
-	for _, query := range queries {
-		query = strings.TrimSpace(query)
-		if query != "" {
-			filtered = append(filtered, query)
-		}
-	}
-	return filtered
-}
-
-// Simplify reportStatus to just handle cancellation
-func (i *Importer) reportStatus(stop chan bool) {
-	<-stop
 }
