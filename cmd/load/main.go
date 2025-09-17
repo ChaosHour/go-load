@@ -27,6 +27,7 @@ func main() {
 	flag.IntVar(&cfg.ChunkSize, "chunk-size", cfg.ChunkSize, "Size of query chunks")
 	flag.StringVar(&cfg.Database, "database", "", "Database name")
 	flag.IntVar(&cfg.ChannelBufferSize, "channel-buffer-size", cfg.ChannelBufferSize, "Size of channel buffer")
+	flag.BoolVar(&cfg.SkipSchema, "data-only", false, "Skip schema files and import only data files")
 	flag.Parse()
 
 	// Load INI file if specified
@@ -39,10 +40,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?multiStatements=true&charset=utf8mb4&tls=skip-verify",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
 
-	imp, err := importer.NewImporter(dsn, cfg.Workers, cfg.ChunkSize, cfg.ChannelBufferSize)
+	imp, err := importer.NewImporter(dsn, cfg.Workers, cfg.ChunkSize, cfg.ChannelBufferSize, cfg.SkipSchema)
 	if err != nil {
 		log.Fatal(err)
 	}

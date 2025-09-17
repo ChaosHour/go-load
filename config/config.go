@@ -19,6 +19,7 @@ type Config struct {
 	IniFile           string
 	Directory         string
 	Pattern           string
+	SkipSchema        bool
 }
 
 func NewConfig() *Config {
